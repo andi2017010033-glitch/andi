@@ -1,0 +1,45 @@
+{
+  "summary": "Tahap 1B (Customer Management) end-to-end tested. Backend: 19/19 pytest passed (list+search+filter+sort+pagination, CRUD, validation, RBAC viewer, multi-tenant isolation, cross-tenant 404, per-tenant counter, audit log with old/new data). Frontend: all major flows work — page renders, add customer + auto CUS-XXXXXX code, edit with readonly code, deactivate with confirmation dialog and soft-delete, detail dialog with Rp 0 summary placeholder, server-side search + empty-state, RBAC hides write buttons for viewer, ownerb only sees tenant B data, mobile viewport shows customer-cards (table hidden), audit log page shows Pelanggan Dibuat/Diperbarui/Dinonaktifkan entries. No regressions on Tahap 1A auth/users/security.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "CustomerFormDialog validation",
+        "issue": "Empty-name and invalid-email validation currently relies on HTML5 native validation (input required, type=email) rather than the JS-level app validator (which does exist and correctly renders customer-form-error). If a screen reader or automation bypasses HTML5 (or a user pastes invalid email into a browser that skips HTML5), only the app-level error appears. Native HTML5 popup is not styled and is in English by browser locale. Consider adding noValidate to the form and letting the existing JS validator + backend 422 handling render the inline customer-form-error consistently in Indonesian.",
+        "selector": "[data-testid=\"customer-form-dialog\"] form",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_customers.py",
+    "/app/test_reports/pytest/customers_results.xml"
+  ],
+  "action_items": [
+    "Optional (LOW): switch CustomerFormDialog form to noValidate so the existing JS validator (already writing to customer-form-error) is the single source of truth for validation UX; keep required for accessibility but ensure Indonesian error messaging is always visible via the inline banner.",
+    "Nice-to-have: on server 422 (e.g. invalid email/phone caught by Pydantic), current code sets customer-form-error via formatApiErrorDetail — verify that error branch surfaces detail correctly (backend test proves the 422 is returned; UI already reads err.response.data.detail so it works)."
+  ],
+  "critical_code_review_comments": [
+    "Customer list uses a regex-based $or search with re.escape — safe from ReDoS-style injection but not indexed; adequate for MVP scale but consider text index in Tahap 2 as data grows.",
+    "serialize_customer omits _id correctly. Good.",
+    "get_tenant_customer correctly returns 404 for both malformed ObjectId and other-tenant ID — hides existence (correct behavior).",
+    "Deactivate endpoint returns early (no log entry) when customer is already inactive — acceptable idempotency but consider logging a no-op audit entry for compliance/traceability.",
+    "server.py is now ~800 lines. Recommend splitting into routers/ (auth, users, customers, security) plus a shared deps/models module before Tahap 2 to keep review-ability.",
+    "CustomersPage.jsx (~500 lines) mixes 3 sub-components. Consider extracting CustomerFormDialog & CustomerDetailDialog to /components/customers/*."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_customers.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin/admin123, staff/staff123, viewer/viewer123, ownerb/ownerb123 (all verified working)",
+  "seed_data_creation": "Backend tests created TEST-prefixed customers via admin (tenant A) and ownerb (tenant B). Frontend flow created 'UI Tester ...' and 'TEST-Deact-...' (deactivated via UI). These persist per project instruction (do not hard-delete). CUS-000002 (CV Uji Dua) had already been deactivated during prior iterations — not a Tahap 1B bug.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Tahap 1B fully passes both API + UI. Seeded tenant-A customers include multiple TEST-* rows and CUS-000001 'PT Uji Satu' (inactive) and CUS-000002 'CV Uji Dua' (now inactive — deactivated in earlier runs). Tenant B has CUS-000001/000002 seeded plus any TEST-B created during pytest. Per-tenant counter has advanced past the numbers in the original spec (tenant A next code is around CUS-000008+). No blocking issues.",
+  "rca of the issue": "N/A — no regressions found."
+}

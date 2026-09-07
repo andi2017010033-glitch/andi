@@ -42,8 +42,19 @@
 - Halaman `/register` (link "Buat akun" dari halaman login): nama, username, email opsional, kata sandi + konfirmasi, toggle visibilitas, error inline; sukses → redirect dashboard
 - Terverifikasi via curl (register 201, duplikat 409, login akun baru 200) dan Playwright (flow UI lengkap, badge STAFF muncul)
 
+### Tahap 1B — Modul Pelanggan (7 Sep 2026) — SELESAI & TERUJI (backend 100%, frontend 100%, 19/19 pytest)
+- **Multi-tenant**: koleksi `companies` (tenant A "PT RekapPiutang Utama" default, tenant B "PT Demo Tenant B"); semua user punya `company_id` (backfill legacy); SEMUA query customers di-scope `company_id` dari user login (backend, bukan frontend); ID tenant lain → **404** (bukan 403)
+- **Role**: owner/admin/staff (full CRUD pelanggan), **viewer** (view-only, write → 403 backend); require_admin kini owner+admin; /users & /security/activity tenant-scoped
+- **Entity customers**: id, company_id, customer_code (auto CUS-XXXXXX via koleksi `counters` atomik per-tenant), name, phone (regex validasi), email (EmailStr), address, notes, status (active/inactive), created_at, updated_at, created_by. Index: company_id, (company_id+customer_code) unique, (company_id+name), (company_id+phone)
+- **API**: GET /api/customers (search server-side re.escape di name/code/phone/email, status filter, sort name_asc/name_desc/newest/oldest, pagination), GET /{id}, GET /{id}/summary (agregasi invoices/payments tenant-scoped — siap untuk Tahap 2, saat ini Rp 0), POST, PATCH (customer_code immutable), POST /{id}/deactivate (soft, idempoten)
+- **Audit log**: customer_created/customer_updated/customer_deactivated dengan company_id, user_id, entity_type, entity_id, old_data, new_data (tanpa password/secret)
+- **UI /pelanggan**: tabel desktop + card mobile, skeleton loading, empty/error state + retry, dialog tambah/edit (noValidate, error inline B. Indonesia), AlertDialog konfirmasi nonaktifkan, detail dialog + ringkasan transaksi, search debounce 400ms
+- Seed demo: viewer/viewer123 (tenant A), ownerb/owner123→ownerb123 (tenant B + 2 pelanggan demo B)
+- Test report: /app/test_reports/iteration_2.json; tests: /app/backend/tests/test_customers.py
+- Sisa issue (non-blocking): regex search belum pakai text index (skala MVP aman); rekomendasi split server.py ke routers sebelum Tahap 2
+
 ## Backlog Prioritas
-- **P0 (Tahap 2)**: CRUD data piutang pelanggan, rekap otomatis, umur piutang (aging), status lunas/belum
+- **P0 (Tahap 2)**: CRUD data piutang/invoice pelanggan, rekap otomatis, umur piutang (aging), status lunas/belum
 - **P1**: Pengingat jatuh tempo, export Excel/PDF rekap, dashboard grafik arus kas, filter/pencarian piutang
 - **P2**: Pecah server.py ke routers (auth/users/security/db), forgot/reset password via email, refresh-on-401 axios interceptor, log perangkat/UA lengkap, multi-cabang
 

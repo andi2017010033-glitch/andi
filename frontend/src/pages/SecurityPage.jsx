@@ -12,6 +12,10 @@ const ACTION_META = {
   logout: { label: "Keluar", icon: LogOut, cls: "text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800" },
   user_created: { label: "Pengguna Dibuat", icon: UserPlus, cls: "text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50" },
   user_updated: { label: "Pengguna Diperbarui", icon: UserCog, cls: "text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50" },
+  user_registered: { label: "Pendaftaran Mandiri", icon: UserPlus, cls: "text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50" },
+  customer_created: { label: "Pelanggan Dibuat", icon: UserPlus, cls: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50" },
+  customer_updated: { label: "Pelanggan Diperbarui", icon: UserCog, cls: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50" },
+  customer_deactivated: { label: "Pelanggan Dinonaktifkan", icon: AlertTriangle, cls: "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50" },
 };
 
 export default function SecurityPage() {

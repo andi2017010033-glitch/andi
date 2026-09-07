@@ -38,7 +38,7 @@ export default function UsersPage() {
     if (user?.role === "admin") loadUsers();
   }, [user, loadUsers]);
 
-  if (user && user.role !== "admin") return <Navigate to="/dashboard" replace />;
+  if (user && !["owner", "admin"].includes(user.role)) return <Navigate to="/dashboard" replace />;
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -143,9 +143,9 @@ export default function UsersPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${u.role === "admin" ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300" : "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300"}`}>
-                      {u.role === "admin" ? <ShieldCheck className="h-3 w-3" /> : <UserCog className="h-3 w-3" />}
-                      {u.role === "admin" ? "Admin" : "Staff"}
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${["owner", "admin"].includes(u.role) ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300" : "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300"}`}>
+                      {["owner", "admin"].includes(u.role) ? <ShieldCheck className="h-3 w-3" /> : <UserCog className="h-3 w-3" />}
+                      {{ owner: "Owner", admin: "Admin", staff: "Staff", viewer: "Viewer" }[u.role] || u.role}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -165,6 +165,7 @@ export default function UsersPage() {
                         <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
                           <SelectItem value="admin">Admin</SelectItem>
                           <SelectItem value="staff">Staff</SelectItem>
+                          <SelectItem value="viewer">Viewer</SelectItem>
                         </SelectContent>
                       </Select>
                       <Button
@@ -222,6 +223,7 @@ export default function UsersPage() {
                   </SelectTrigger>
                   <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
                     <SelectItem value="staff">Staff</SelectItem>
+                    <SelectItem value="viewer">Viewer</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
                 </Select>

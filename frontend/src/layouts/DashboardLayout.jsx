@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Receipt, Users, ShieldCheck, Settings, LogOut, Moon, Sun, FileCheck2, Timer } from "lucide-react";
+import { LayoutDashboard, Receipt, Users, ShieldCheck, Settings, LogOut, Moon, Sun, FileCheck2, Timer, Contact } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
 
@@ -46,6 +46,7 @@ function SessionTimer() {
 
 const NAV_ITEMS = [
   { label: "Ringkasan", icon: LayoutDashboard, path: "/dashboard", testId: "nav-dashboard" },
+  { label: "Pelanggan", icon: Contact, path: "/pelanggan", testId: "nav-pelanggan" },
   { label: "Daftar Piutang", icon: Receipt, path: "/piutang", testId: "nav-piutang", disabled: true },
   { label: "Pengguna & Peran", icon: Users, path: "/users", testId: "nav-users", adminOnly: true },
   { label: "Keamanan & Sesi", icon: ShieldCheck, path: "/security", testId: "nav-security" },
@@ -54,10 +55,13 @@ const NAV_ITEMS = [
 
 const PAGE_TITLES = {
   "/dashboard": "Ringkasan",
+  "/pelanggan": "Pelanggan",
   "/users": "Pengguna & Peran",
   "/security": "Keamanan & Sesi",
   "/settings": "Pengaturan",
 };
+
+const ROLE_LABELS = { owner: "Owner", admin: "Admin", staff: "Staff", viewer: "Viewer" };
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
@@ -85,7 +89,7 @@ export default function DashboardLayout() {
           </div>
         </div>
         <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.filter((item) => !item.adminOnly || user.role === "admin").map((item) =>
+          {NAV_ITEMS.filter((item) => !item.adminOnly || ["owner", "admin"].includes(user.role)).map((item) =>
             item.disabled ? (
               <div
                 key={item.path}
@@ -128,12 +132,12 @@ export default function DashboardLayout() {
               <span
                 data-testid="user-role-badge"
                 className={`inline-block text-[10px] font-semibold uppercase tracking-wider rounded-full px-2 py-0.5 ${
-                  user.role === "admin"
+                  ["owner", "admin"].includes(user.role)
                     ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
                     : "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300"
                 }`}
               >
-                {user.role === "admin" ? "Admin" : "Staff"}
+                {ROLE_LABELS[user.role] || user.role}
               </span>
             </div>
           </div>

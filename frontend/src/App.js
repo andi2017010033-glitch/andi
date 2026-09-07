@@ -6,6 +6,7 @@ import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
 import DashboardLayout from "@/layouts/DashboardLayout";
 import DashboardPage from "@/pages/DashboardPage";
+import CustomersPage from "@/pages/CustomersPage";
 import UsersPage from "@/pages/UsersPage";
 import SecurityPage from "@/pages/SecurityPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -54,6 +55,7 @@ function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="pelanggan" element={<CustomersPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="security" element={<SecurityPage />} />
             <Route path="settings" element={<SettingsPage />} />

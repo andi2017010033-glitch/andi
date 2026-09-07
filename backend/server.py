@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import re
 import logging
 import bcrypt
 import jwt
@@ -15,7 +16,7 @@ from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depend
 from pymongo import ReturnDocument
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -76,6 +77,7 @@ def serialize_user(doc: dict) -> dict:
         "email": doc.get("email"),
         "name": doc.get("name", doc["username"]),
         "role": doc.get("role", "staff"),
+        "company_id": doc.get("company_id"),
         "is_active": doc.get("is_active", True),
         "created_at": doc.get("created_at"),
         "last_login_at": doc.get("last_login_at"),
@@ -89,11 +91,28 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-async def log_activity(username: str, action: str, request: Request, detail: Optional[str] = None):
+async def log_activity(
+    username: str,
+    action: str,
+    request: Request,
+    detail: Optional[str] = None,
+    company_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    old_data: Optional[dict] = None,
+    new_data: Optional[dict] = None,
+):
     await db.activity_logs.insert_one({
         "username": username,
         "action": action,
         "detail": detail,
+        "company_id": company_id,
+        "user_id": user_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "old_data": old_data,
+        "new_data": new_data,
         "ip": get_client_ip(request),
         "user_agent": request.headers.get("user-agent", "")[:200],
         "timestamp": datetime.now(timezone.utc),
@@ -125,8 +144,17 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Akses ditolak. Hanya admin yang diizinkan.")
+    if user["role"] not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Akses ditolak. Hanya admin/owner yang diizinkan.")
+    return user
+
+
+CUSTOMER_WRITE_ROLES = ("owner", "admin", "staff")
+
+
+async def require_customer_write(user: dict = Depends(get_current_user)) -> dict:
+    if user["role"] not in CUSTOMER_WRITE_ROLES:
+        raise HTTPException(status_code=403, detail="Akses ditolak. Peran Anda hanya dapat melihat data.")
     return user
 
 
@@ -149,14 +177,59 @@ class UserCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     email: Optional[str] = None
     password: str = Field(min_length=6)
-    role: str = Field(default="staff", pattern="^(admin|staff)$")
+    role: str = Field(default="staff", pattern="^(owner|admin|staff|viewer)$")
 
 
 class UserUpdateRequest(BaseModel):
     name: Optional[str] = None
-    role: Optional[str] = Field(default=None, pattern="^(admin|staff)$")
+    role: Optional[str] = Field(default=None, pattern="^(owner|admin|staff|viewer)$")
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=6)
+
+
+PHONE_PATTERN = r"^[0-9+\-\s()]{6,25}$"
+
+
+class CustomerCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=25)
+    email: Optional[EmailStr] = None
+    address: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    status: str = Field(default="active", pattern="^(active|inactive)$")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is None:
+            return v
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if not re.match(PHONE_PATTERN, cleaned):
+            raise ValueError("Nomor telepon tidak valid (6-25 digit, boleh + - spasi)")
+        return cleaned
+
+
+class CustomerUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=25)
+    email: Optional[EmailStr] = None
+    address: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    status: Optional[str] = Field(default=None, pattern="^(active|inactive)$")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v):
+        if v is None:
+            return v
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        if not re.match(PHONE_PATTERN, cleaned):
+            raise ValueError("Nomor telepon tidak valid (6-25 digit, boleh + - spasi)")
+        return cleaned
 
 
 # ---------- Auth endpoints ----------
@@ -167,11 +240,14 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     if await db.users.find_one({"username": username}):
         raise HTTPException(status_code=409, detail="Username sudah digunakan.")
     now = datetime.now(timezone.utc)
+    default_company = await db.companies.find_one({"is_default": True})
+    company_id = str(default_company["_id"]) if default_company else None
     doc = {
         "username": username,
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": "staff",
+        "company_id": company_id,
         "is_active": True,
         "created_at": now,
         "created_by": "self-register",
@@ -189,7 +265,7 @@ async def register(body: RegisterRequest, request: Request, response: Response):
     refresh_token = create_refresh_token(str(doc["_id"]))
     response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="none", max_age=ACCESS_TOKEN_TTL_MINUTES * 60, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=True, samesite="none", max_age=REFRESH_TOKEN_TTL_DAYS * 86400, path="/")
-    await log_activity(username, "user_registered", request, "Pendaftaran mandiri (peran staff)")
+    await log_activity(username, "user_registered", request, "Pendaftaran mandiri (peran staff)", company_id=company_id, user_id=str(doc["_id"]), entity_type="user", entity_id=str(doc["_id"]))
     return {
         "user": serialize_user(doc),
         "access_token": access_token,
@@ -247,7 +323,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
     response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="none", max_age=ACCESS_TOKEN_TTL_MINUTES * 60, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=True, samesite="none", max_age=REFRESH_TOKEN_TTL_DAYS * 86400, path="/")
 
-    await log_activity(username, "login_success", request)
+    await log_activity(username, "login_success", request, company_id=user.get("company_id"), user_id=str(user["_id"]))
     user_doc = serialize_user(user)
     user_doc["last_login_at"] = datetime.now(timezone.utc)
     return {
@@ -317,7 +393,7 @@ async def session_info(request: Request, user: dict = Depends(get_current_user))
 
 @api_router.get("/users")
 async def list_users(admin: dict = Depends(require_admin)):
-    users = await db.users.find({}).sort("created_at", 1).to_list(500)
+    users = await db.users.find({"company_id": admin["company_id"]}).sort("created_at", 1).to_list(500)
     return [serialize_user(u) for u in users]
 
 
@@ -332,6 +408,7 @@ async def create_user(body: UserCreateRequest, request: Request, admin: dict = D
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "role": body.role,
+        "company_id": admin["company_id"],
         "is_active": True,
         "created_at": datetime.now(timezone.utc),
         "created_by": admin["username"],
@@ -366,7 +443,7 @@ async def update_user(user_id: str, body: UserUpdateRequest, request: Request, a
 
     if str(target["_id"]) == admin["id"] and updates.get("is_active") is False:
         raise HTTPException(status_code=400, detail="Tidak dapat menonaktifkan akun sendiri.")
-    if str(target["_id"]) == admin["id"] and updates.get("role") == "staff":
+    if str(target["_id"]) == admin["id"] and updates.get("role") in ("staff", "viewer"):
         raise HTTPException(status_code=400, detail="Tidak dapat menurunkan peran akun sendiri.")
 
     if updates:
@@ -376,17 +453,215 @@ async def update_user(user_id: str, body: UserUpdateRequest, request: Request, a
     return serialize_user(updated)
 
 
+# ---------- Customers (tenant-scoped) ----------
+
+CUSTOMER_SORTS = {
+    "name_asc": [("name", 1), ("_id", 1)],
+    "name_desc": [("name", -1), ("_id", 1)],
+    "newest": [("created_at", -1), ("_id", -1)],
+    "oldest": [("created_at", 1), ("_id", 1)],
+}
+
+
+def serialize_customer(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "company_id": doc.get("company_id"),
+        "customer_code": doc.get("customer_code"),
+        "name": doc.get("name"),
+        "phone": doc.get("phone"),
+        "email": doc.get("email"),
+        "address": doc.get("address"),
+        "notes": doc.get("notes"),
+        "status": doc.get("status", "active"),
+        "created_by": doc.get("created_by"),
+        "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
+        "updated_at": doc["updated_at"].isoformat() if doc.get("updated_at") else None,
+    }
+
+
+async def get_tenant_customer(customer_id: str, company_id: str) -> dict:
+    try:
+        oid = ObjectId(customer_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+    doc = await db.customers.find_one({"_id": oid, "company_id": company_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+    return doc
+
+
+@api_router.get("/customers")
+async def list_customers(
+    search: str = "",
+    status: str = "all",
+    sort: str = "name_asc",
+    page: int = 1,
+    limit: int = 10,
+    user: dict = Depends(get_current_user),
+):
+    query = {"company_id": user["company_id"]}
+    if status in ("active", "inactive"):
+        query["status"] = status
+    if search.strip():
+        pattern = re.escape(search.strip())
+        query["$or"] = [
+            {"name": {"$regex": pattern, "$options": "i"}},
+            {"customer_code": {"$regex": pattern, "$options": "i"}},
+            {"phone": {"$regex": pattern, "$options": "i"}},
+            {"email": {"$regex": pattern, "$options": "i"}},
+        ]
+    page = max(1, page)
+    limit = min(max(1, limit), 100)
+    sort_spec = CUSTOMER_SORTS.get(sort, CUSTOMER_SORTS["name_asc"])
+    total = await db.customers.count_documents(query)
+    items = await db.customers.find(query).sort(sort_spec).skip((page - 1) * limit).limit(limit).to_list(limit)
+    return {
+        "items": [serialize_customer(c) for c in items],
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + limit - 1) // limit),
+        "limit": limit,
+    }
+
+
+@api_router.get("/customers/{customer_id}")
+async def get_customer(customer_id: str, user: dict = Depends(get_current_user)):
+    return serialize_customer(await get_tenant_customer(customer_id, user["company_id"]))
+
+
+@api_router.get("/customers/{customer_id}/summary")
+async def get_customer_summary(customer_id: str, user: dict = Depends(get_current_user)):
+    customer = await get_tenant_customer(customer_id, user["company_id"])
+    cid = str(customer["_id"])
+    company_id = user["company_id"]
+    invoice_count = await db.invoices.count_documents({"company_id": company_id, "customer_id": cid})
+    inv_agg = await db.invoices.aggregate([
+        {"$match": {"company_id": company_id, "customer_id": cid}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}},
+    ]).to_list(1)
+    pay_agg = await db.payments.aggregate([
+        {"$match": {"company_id": company_id, "customer_id": cid}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+    ]).to_list(1)
+    total_invoice = inv_agg[0]["total"] if inv_agg else 0
+    total_payment = pay_agg[0]["total"] if pay_agg else 0
+    return {
+        "invoice_count": invoice_count,
+        "total_invoice": total_invoice,
+        "total_payment": total_payment,
+        "total_piutang": total_invoice - total_payment,
+    }
+
+
+@api_router.post("/customers", status_code=201)
+async def create_customer(body: CustomerCreateRequest, request: Request, user: dict = Depends(require_customer_write)):
+    counter = await db.counters.find_one_and_update(
+        {"_id": f"customer_code:{user['company_id']}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    now = datetime.now(timezone.utc)
+    doc = {
+        "company_id": user["company_id"],
+        "customer_code": f"CUS-{counter['seq']:06d}",
+        "name": body.name.strip(),
+        "status": body.status,
+        "created_by": user["username"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    if body.phone:
+        doc["phone"] = body.phone
+    if body.email:
+        doc["email"] = str(body.email).strip().lower()
+    if body.address:
+        doc["address"] = body.address.strip()
+    if body.notes:
+        doc["notes"] = body.notes.strip()
+    result = await db.customers.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    await log_activity(
+        user["username"], "customer_created", request,
+        detail=f"Membuat pelanggan {doc['customer_code']} - {doc['name']}",
+        company_id=user["company_id"], user_id=user["id"],
+        entity_type="customer", entity_id=str(doc["_id"]),
+        new_data=serialize_customer(doc),
+    )
+    return serialize_customer(doc)
+
+
+@api_router.patch("/customers/{customer_id}")
+async def update_customer(customer_id: str, body: CustomerUpdateRequest, request: Request, user: dict = Depends(require_customer_write)):
+    existing = await get_tenant_customer(customer_id, user["company_id"])
+    updates = {}
+    for field in ("name", "phone", "address", "notes"):
+        val = getattr(body, field)
+        if val is not None:
+            updates[field] = val.strip() if isinstance(val, str) else val
+    if body.email is not None:
+        updates["email"] = str(body.email).strip().lower()
+    if body.status is not None:
+        updates["status"] = body.status
+    if not updates:
+        return serialize_customer(existing)
+    updates["updated_at"] = datetime.now(timezone.utc)
+    old_data = {k: existing.get(k) for k in updates if k != "updated_at"}
+    await db.customers.update_one({"_id": existing["_id"], "company_id": user["company_id"]}, {"$set": updates})
+    updated = await db.customers.find_one({"_id": existing["_id"]})
+    new_data = {k: updated.get(k) for k in updates if k != "updated_at"}
+    await log_activity(
+        user["username"], "customer_updated", request,
+        detail=f"Memperbarui pelanggan {existing['customer_code']}: {list(new_data.keys())}",
+        company_id=user["company_id"], user_id=user["id"],
+        entity_type="customer", entity_id=customer_id,
+        old_data=old_data, new_data=new_data,
+    )
+    return serialize_customer(updated)
+
+
+@api_router.post("/customers/{customer_id}/deactivate")
+async def deactivate_customer(customer_id: str, request: Request, user: dict = Depends(require_customer_write)):
+    existing = await get_tenant_customer(customer_id, user["company_id"])
+    if existing.get("status") == "inactive":
+        return serialize_customer(existing)
+    await db.customers.update_one(
+        {"_id": existing["_id"], "company_id": user["company_id"]},
+        {"$set": {"status": "inactive", "updated_at": datetime.now(timezone.utc)}},
+    )
+    updated = await db.customers.find_one({"_id": existing["_id"]})
+    await log_activity(
+        user["username"], "customer_deactivated", request,
+        detail=f"Menonaktifkan pelanggan {existing['customer_code']} - {existing['name']}",
+        company_id=user["company_id"], user_id=user["id"],
+        entity_type="customer", entity_id=customer_id,
+        old_data={"status": "active"}, new_data={"status": "inactive"},
+    )
+    return serialize_customer(updated)
+
+
 # ---------- Security / audit (admin) ----------
 
 @api_router.get("/security/activity")
 async def get_activity_logs(admin: dict = Depends(require_admin)):
-    logs = await db.activity_logs.find({}).sort("timestamp", -1).limit(100).to_list(100)
+    logs = await db.activity_logs.find({
+        "$or": [
+            {"company_id": admin["company_id"]},
+            {"company_id": None},
+            {"company_id": {"$exists": False}},
+        ]
+    }).sort("timestamp", -1).limit(200).to_list(200)
     return [
         {
             "id": str(log["_id"]),
             "username": log.get("username"),
             "action": log.get("action"),
             "detail": log.get("detail"),
+            "entity_type": log.get("entity_type"),
+            "entity_id": log.get("entity_id"),
+            "old_data": log.get("old_data"),
+            "new_data": log.get("new_data"),
             "ip": log.get("ip"),
             "timestamp": log.get("timestamp").isoformat() if log.get("timestamp") else None,
         }
@@ -410,6 +685,28 @@ async def startup():
     await db.users.create_index("email", unique=True, partialFilterExpression={"email": {"$type": "string"}})
     await db.login_attempts.create_index("identifier")
     await db.activity_logs.create_index("timestamp")
+    await db.activity_logs.create_index("company_id")
+    await db.companies.create_index("code", unique=True)
+    await db.customers.create_index("company_id")
+    await db.customers.create_index([("company_id", 1), ("customer_code", 1)], unique=True)
+    await db.customers.create_index([("company_id", 1), ("name", 1)])
+    await db.customers.create_index([("company_id", 1), ("phone", 1)])
+
+    # Tenants (companies)
+    company_a = await db.companies.find_one({"code": "DEFAULT"})
+    if company_a is None:
+        res = await db.companies.insert_one({"name": "PT RekapPiutang Utama", "code": "DEFAULT", "is_default": True, "created_at": datetime.now(timezone.utc)})
+        company_a_id = str(res.inserted_id)
+        logger.info("Default company (tenant A) seeded")
+    else:
+        company_a_id = str(company_a["_id"])
+    company_b = await db.companies.find_one({"code": "DEMO-B"})
+    if company_b is None:
+        res = await db.companies.insert_one({"name": "PT Demo Tenant B", "code": "DEMO-B", "is_default": False, "created_at": datetime.now(timezone.utc)})
+        company_b_id = str(res.inserted_id)
+        logger.info("Demo tenant B seeded")
+    else:
+        company_b_id = str(company_b["_id"])
 
     admin_username = os.environ["ADMIN_USERNAME"].strip().lower()
     admin_email = os.environ["ADMIN_EMAIL"].strip().lower()
@@ -422,6 +719,7 @@ async def startup():
             "name": "Administrator",
             "password_hash": hash_password(admin_password),
             "role": "admin",
+            "company_id": company_a_id,
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "last_login_at": None,
@@ -431,18 +729,57 @@ async def startup():
         await db.users.update_one({"username": admin_username}, {"$set": {"password_hash": hash_password(admin_password), "role": "admin", "is_active": True}})
         logger.info("Admin password re-synced from env")
 
-    staff = await db.users.find_one({"username": "staff"})
-    if staff is None:
+    if await db.users.find_one({"username": "staff"}) is None:
         await db.users.insert_one({
             "username": "staff",
             "name": "Staf Demo",
             "password_hash": hash_password(os.environ.get("STAFF_PASSWORD", "staff123")),
             "role": "staff",
+            "company_id": company_a_id,
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
             "last_login_at": None,
         })
         logger.info("Demo staff account seeded")
+
+    if await db.users.find_one({"username": "viewer"}) is None:
+        await db.users.insert_one({
+            "username": "viewer",
+            "name": "Viewer Demo",
+            "password_hash": hash_password(os.environ.get("VIEWER_PASSWORD", "viewer123")),
+            "role": "viewer",
+            "company_id": company_a_id,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+            "last_login_at": None,
+        })
+        logger.info("Demo viewer account seeded")
+
+    if await db.users.find_one({"username": "ownerb"}) is None:
+        await db.users.insert_one({
+            "username": "ownerb",
+            "name": "Owner Tenant B",
+            "password_hash": hash_password(os.environ.get("OWNERB_PASSWORD", "ownerb123")),
+            "role": "owner",
+            "company_id": company_b_id,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+            "last_login_at": None,
+        })
+        logger.info("Demo tenant B owner seeded")
+
+    # Backfill legacy users that predate multi-tenant
+    await db.users.update_many({"company_id": {"$exists": False}}, {"$set": {"company_id": company_a_id}})
+
+    # Demo customers for Tenant B (tenant-isolation testing)
+    if await db.customers.count_documents({"company_id": company_b_id}) == 0:
+        now = datetime.now(timezone.utc)
+        await db.customers.insert_many([
+            {"company_id": company_b_id, "customer_code": "CUS-000001", "name": "CV Mitra Sejahtera B", "phone": "081234567890", "status": "active", "created_by": "seed", "created_at": now, "updated_at": now},
+            {"company_id": company_b_id, "customer_code": "CUS-000002", "name": "Toko Berkah Tenant B", "phone": "081298765432", "status": "active", "created_by": "seed", "created_at": now, "updated_at": now},
+        ])
+        await db.counters.update_one({"_id": f"customer_code:{company_b_id}"}, {"$setOnInsert": {"seq": 2}}, upsert=True)
+        logger.info("Demo customers for tenant B seeded")
 
 
 @app.on_event("shutdown")
