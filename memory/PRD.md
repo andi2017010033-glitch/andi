@@ -63,8 +63,19 @@
 - Test report: /app/test_reports/iteration_3.json; tests: /app/backend/tests/test_invoices.py
 - Sisa issue (non-blocking): rekomendasi split server.py ke routers & ekstrak dialog InvoicesPage ke components sebelum Tahap 3; status overdue dihitung per-read (aman <1k invoice/tenant)
 
+### Tahap 1C — Modul Invoice + Invoice Items (7 Sep 2026) — SELESAI & TERUJI (backend 15/15 pytest, frontend 100%)
+- **Koleksi**: `invoices` diperluas (invoice_code format baru INV-YYYYMM-XXXXXX per tenant+periode via counters, subtotal, discount, tax, total, paid_amount, outstanding_amount, status: draft/unpaid/partial/paid/cancelled + overdue computed) + koleksi baru `invoice_items` (company_id, invoice_id wajib, product_code/name, quantity, unit, price, discount, subtotal). Invoice lama Tahap 2 di-backfill (subtotal=total, outstanding=total-paid)
+- **Perhitungan otoritatif backend**: Decimal (ROUND_HALF_UP 2dp) — subtotal item = qty×price−diskon; total = subtotal − diskon + pajak; frontend hanya preview. Validasi: qty>0, harga/diskon/pajak ≥0, diskon ≤ subtotal, total ≥ paid_amount, due_date ≥ invoice_date
+- **API**: POST /api/invoices (items ≥1, save_as draft|invoice, paid=0, outstanding=total), PATCH (draft full edit + terbitkan via save_as=invoice; paid_amount>0 → item/diskon/pajak terkunci; lunas → hanya catatan), POST /{id}/cancel (owner/admin only, tolak jika ada pembayaran, soft), GET /api/invoices (search, 7 status, period today/week/month/custom range, sort, page size 10/25/50/100, receivable=true utk rekap), GET /{id} (+items +payments). Payment diblokir untuk draft/cancelled. Summary rekap mengecualikan draft & cancelled
+- **Transaction safety**: deteksi replica set (TXN_SUPPORTED via hello) → transaksi MongoDB; standalone → fallback kompensasi (hapus invoice jika items gagal; restore items lama saat update gagal)
+- **UI /invoice**: tabel 10 kolom + card mobile, customer picker searchable (kode+nama+telepon, hanya pelanggan aktif tenant), editor item (tabel horizontal-scroll, subtotal live), ringkasan preview, Simpan Draft vs Simpan Invoice, dialog cancel konfirmasi, detail dengan items + ringkasan Rp + riwayat pembayaran
+- **Rekap /piutang**: tetap berfungsi, mengecualikan draft/cancelled, tombol mengarah ke /invoice
+- **Security**: tenant isolation 404 (GET/cancel lintas tenant), viewer 403, staff tanpa cancel (403), audit invoice_created/invoice_updated/invoice_cancelled dengan old/new data
+- Test report: /app/test_reports/iteration_4.json; tests: /app/backend/tests/test_invoice_items.py
+- Sisa issue (non-blocking): server.py ~1481 baris & InvoiceManagePage.jsx ~777 baris — disarankan split ke routers/ & components/ sebelum tahap berikutnya; test_invoices.py lama perlu didepresiasi (skema lama)
+
 ## Backlog Prioritas
-- **P0 (Tahap 3)**: Laporan/export rekap piutang (Excel/PDF), pengingat jatuh tempo, atau modul berikut sesuai instruksi pengguna
+- **P0 (Tahap 3)**: Modul Pembayaran penuh / laporan & export rekap piutang / pengingat jatuh tempo — sesuai instruksi pengguna
 - **P1**: Pengingat jatuh tempo, export Excel/PDF rekap, dashboard grafik arus kas, filter/pencarian piutang
 - **P2**: Pecah server.py ke routers (auth/users/security/db), forgot/reset password via email, refresh-on-401 axios interceptor, log perangkat/UA lengkap, multi-cabang
 

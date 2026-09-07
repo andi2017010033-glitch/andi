@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Receipt, Users, ShieldCheck, Settings, LogOut, Moon, Sun, FileCheck2, Timer, Contact } from "lucide-react";
+import { LayoutDashboard, Receipt, Users, ShieldCheck, Settings, LogOut, Moon, Sun, FileCheck2, Timer, Contact, FileText } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
 
@@ -47,6 +47,7 @@ function SessionTimer() {
 const NAV_ITEMS = [
   { label: "Ringkasan", icon: LayoutDashboard, path: "/dashboard", testId: "nav-dashboard" },
   { label: "Pelanggan", icon: Contact, path: "/pelanggan", testId: "nav-pelanggan" },
+  { label: "Invoice", icon: FileText, path: "/invoice", testId: "nav-invoice" },
   { label: "Daftar Piutang", icon: Receipt, path: "/piutang", testId: "nav-piutang" },
   { label: "Pengguna & Peran", icon: Users, path: "/users", testId: "nav-users", adminOnly: true },
   { label: "Keamanan & Sesi", icon: ShieldCheck, path: "/security", testId: "nav-security" },
@@ -56,6 +57,7 @@ const NAV_ITEMS = [
 const PAGE_TITLES = {
   "/dashboard": "Ringkasan",
   "/pelanggan": "Pelanggan",
+  "/invoice": "Invoice",
   "/piutang": "Daftar Piutang",
   "/users": "Pengguna & Peran",
   "/security": "Keamanan & Sesi",

@@ -10,6 +10,7 @@ import logging
 import bcrypt
 import jwt
 from bson import ObjectId
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List
 from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends
@@ -28,6 +29,7 @@ ACCESS_TOKEN_TTL_MINUTES = 15
 REFRESH_TOKEN_TTL_DAYS = 7
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+TXN_SUPPORTED = False
 
 app = FastAPI(title="Rekap Piutang Otomatis API")
 api_router = APIRouter(prefix="/api")
@@ -155,6 +157,15 @@ CUSTOMER_WRITE_ROLES = ("owner", "admin", "staff")
 async def require_customer_write(user: dict = Depends(get_current_user)) -> dict:
     if user["role"] not in CUSTOMER_WRITE_ROLES:
         raise HTTPException(status_code=403, detail="Akses ditolak. Peran Anda hanya dapat melihat data.")
+    return user
+
+
+INVOICE_CANCEL_ROLES = ("owner", "admin")
+
+
+async def require_invoice_cancel(user: dict = Depends(get_current_user)) -> dict:
+    if user["role"] not in INVOICE_CANCEL_ROLES:
+        raise HTTPException(status_code=403, detail="Akses ditolak. Hanya owner/admin yang dapat membatalkan invoice.")
     return user
 
 
@@ -643,19 +654,34 @@ async def deactivate_customer(customer_id: str, request: Request, user: dict = D
 
 # ---------- Invoices / Piutang (tenant-scoped) ----------
 
+class InvoiceItemInput(BaseModel):
+    product_code: Optional[str] = Field(default=None, max_length=60)
+    product_name: str = Field(min_length=1, max_length=200)
+    quantity: float = Field(gt=0, le=1_000_000_000)
+    unit: Optional[str] = Field(default=None, max_length=20)
+    price: float = Field(ge=0, le=10_000_000_000_000)
+    discount: float = Field(default=0, ge=0, le=10_000_000_000_000)
+
+
 class InvoiceCreateRequest(BaseModel):
     customer_id: str
     invoice_date: date
     due_date: date
-    total: float = Field(gt=0, le=10_000_000_000_000)
     notes: Optional[str] = Field(default=None, max_length=1000)
+    discount: float = Field(default=0, ge=0, le=10_000_000_000_000)
+    tax: float = Field(default=0, ge=0, le=10_000_000_000_000)
+    items: List[InvoiceItemInput] = Field(min_length=1, max_length=200)
+    save_as: str = Field(default="invoice", pattern="^(draft|invoice)$")
 
 
 class InvoiceUpdateRequest(BaseModel):
     invoice_date: Optional[date] = None
     due_date: Optional[date] = None
-    total: Optional[float] = Field(default=None, gt=0, le=10_000_000_000_000)
     notes: Optional[str] = Field(default=None, max_length=1000)
+    discount: Optional[float] = Field(default=None, ge=0, le=10_000_000_000_000)
+    tax: Optional[float] = Field(default=None, ge=0, le=10_000_000_000_000)
+    items: Optional[List[InvoiceItemInput]] = Field(default=None, min_length=1, max_length=200)
+    save_as: Optional[str] = Field(default=None, pattern="^(draft|invoice)$")
 
 
 class PaymentCreateRequest(BaseModel):
@@ -669,7 +695,51 @@ def to_utc_day(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
 
+def dec(v) -> Decimal:
+    return Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def to_num(d: Decimal):
+    f = float(d)
+    return int(f) if f == int(f) else f
+
+
+def compute_items(items) -> tuple:
+    lines = []
+    subtotal = Decimal("0")
+    for it in items:
+        line = Decimal(str(it.quantity)) * Decimal(str(it.price)) - Decimal(str(it.discount))
+        if line < 0:
+            raise HTTPException(status_code=400, detail=f"Diskon item '{it.product_name}' melebihi nilai item.")
+        line = line.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        subtotal += line
+        lines.append({
+            "product_code": (it.product_code or "").strip() or None,
+            "product_name": it.product_name.strip(),
+            "quantity": it.quantity,
+            "unit": (it.unit or "").strip() or None,
+            "price": it.price,
+            "discount": it.discount,
+            "subtotal": to_num(line),
+        })
+    return lines, subtotal.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+async def next_invoice_number(company_id: str, inv_date: date) -> str:
+    period = f"{inv_date.year}{inv_date.month:02d}"
+    counter = await db.counters.find_one_and_update(
+        {"_id": f"invoice_number:{company_id}:{period}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return f"INV-{period}-{counter['seq']:06d}"
+
+
 def compute_invoice_status(doc: dict) -> str:
+    stored = doc.get("status", "unpaid")
+    if stored in ("draft", "cancelled"):
+        return stored
     total = doc.get("total", 0)
     paid = doc.get("paid_amount", 0)
     if paid >= total:
@@ -686,6 +756,8 @@ def compute_invoice_status(doc: dict) -> str:
 
 
 def serialize_invoice(doc: dict) -> dict:
+    total = doc.get("total", 0)
+    paid = doc.get("paid_amount", 0)
     return {
         "id": str(doc["_id"]),
         "company_id": doc.get("company_id"),
@@ -695,14 +767,32 @@ def serialize_invoice(doc: dict) -> dict:
         "customer_code": doc.get("customer_code"),
         "invoice_date": doc["invoice_date"].isoformat() if doc.get("invoice_date") else None,
         "due_date": doc["due_date"].isoformat() if doc.get("due_date") else None,
-        "total": doc.get("total", 0),
-        "paid_amount": doc.get("paid_amount", 0),
-        "remaining": doc.get("total", 0) - doc.get("paid_amount", 0),
+        "subtotal": doc.get("subtotal", total),
+        "discount": doc.get("discount", 0),
+        "tax": doc.get("tax", 0),
+        "total": total,
+        "paid_amount": paid,
+        "remaining": total - paid,
+        "outstanding_amount": doc.get("outstanding_amount", total - paid),
         "status": compute_invoice_status(doc),
         "notes": doc.get("notes"),
         "created_by": doc.get("created_by"),
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
         "updated_at": doc["updated_at"].isoformat() if doc.get("updated_at") else None,
+    }
+
+
+def serialize_invoice_item(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "invoice_id": doc.get("invoice_id"),
+        "product_code": doc.get("product_code"),
+        "product_name": doc.get("product_name"),
+        "quantity": doc.get("quantity", 0),
+        "unit": doc.get("unit"),
+        "price": doc.get("price", 0),
+        "discount": doc.get("discount", 0),
+        "subtotal": doc.get("subtotal", 0),
     }
 
 
@@ -745,25 +835,37 @@ INVOICE_SORTS = {
 async def list_invoices(
     search: str = "",
     status: str = "all",
+    period: str = "all",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     sort: str = "newest",
     page: int = 1,
     limit: int = 10,
+    receivable: bool = False,
     user: dict = Depends(get_current_user),
 ):
     now = datetime.now(timezone.utc)
     query = {"company_id": user["company_id"]}
     if status == "paid":
+        query["status"] = {"$nin": ["draft", "cancelled"]}
         query["$expr"] = {"$gte": ["$paid_amount", "$total"]}
     elif status == "partial":
         query["paid_amount"] = {"$gt": 0}
         query["$expr"] = {"$lt": ["$paid_amount", "$total"]}
         query["due_date"] = {"$gte": now}
+        query["status"] = {"$nin": ["draft", "cancelled"]}
     elif status == "unpaid":
+        query["status"] = "unpaid"
         query["paid_amount"] = 0
         query["due_date"] = {"$gte": now}
     elif status == "overdue":
+        query["status"] = {"$nin": ["draft", "cancelled"]}
         query["$expr"] = {"$lt": ["$paid_amount", "$total"]}
         query["due_date"] = {"$lt": now}
+    elif status in ("draft", "cancelled"):
+        query["status"] = status
+    elif receivable:
+        query["status"] = {"$nin": ["draft", "cancelled"]}
     if search.strip():
         pattern = re.escape(search.strip())
         query["$or"] = [
@@ -771,6 +873,26 @@ async def list_invoices(
             {"customer_name": {"$regex": pattern, "$options": "i"}},
             {"customer_code": {"$regex": pattern, "$options": "i"}},
         ]
+    start = None
+    end = None
+    if period == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif period == "custom":
+        if date_from:
+            start = to_utc_day(date_from)
+        if date_to:
+            end = to_utc_day(date_to) + timedelta(days=1)
+    if start or end:
+        rng = {}
+        if start:
+            rng["$gte"] = start
+        if end:
+            rng["$lt"] = end
+        query["invoice_date"] = rng
     page = max(1, page)
     limit = min(max(1, limit), 100)
     sort_spec = INVOICE_SORTS.get(sort, INVOICE_SORTS["newest"])
@@ -789,47 +911,92 @@ async def list_invoices(
 async def get_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     invoice = await get_tenant_invoice(invoice_id, user["company_id"])
     payments = await db.payments.find({"company_id": user["company_id"], "invoice_id": invoice_id}).sort("payment_date", -1).to_list(500)
-    return {"invoice": serialize_invoice(invoice), "payments": [serialize_payment(p) for p in payments]}
+    items = await db.invoice_items.find({"company_id": user["company_id"], "invoice_id": invoice_id}).sort("created_at", 1).to_list(500)
+    return {
+        "invoice": serialize_invoice(invoice),
+        "payments": [serialize_payment(p) for p in payments],
+        "items": [serialize_invoice_item(i) for i in items],
+    }
 
 
 @api_router.post("/invoices", status_code=201)
 async def create_invoice(body: InvoiceCreateRequest, request: Request, user: dict = Depends(require_customer_write)):
     customer = await get_tenant_customer(body.customer_id, user["company_id"])
     if customer.get("status") != "active":
-        raise HTTPException(status_code=400, detail="Pelanggan tidak aktif. Aktifkan kembali sebelum membuat piutang.")
+        raise HTTPException(status_code=400, detail="Pelanggan tidak aktif. Aktifkan kembali sebelum membuat invoice.")
     if body.due_date < body.invoice_date:
         raise HTTPException(status_code=400, detail="Tanggal jatuh tempo tidak boleh sebelum tanggal invoice.")
-    counter = await db.counters.find_one_and_update(
-        {"_id": f"invoice_code:{user['company_id']}"},
-        {"$inc": {"seq": 1}},
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-    )
+    lines, subtotal = compute_items(body.items)
+    discount = dec(body.discount)
+    tax = dec(body.tax)
+    if discount > subtotal:
+        raise HTTPException(status_code=400, detail="Diskon invoice melebihi subtotal item.")
+    total = subtotal - discount + tax
+    if total < 0:
+        raise HTTPException(status_code=400, detail="Total invoice tidak boleh negatif.")
+    invoice_number = await next_invoice_number(user["company_id"], body.invoice_date)
     now = datetime.now(timezone.utc)
     doc = {
         "company_id": user["company_id"],
-        "invoice_code": f"INV-{counter['seq']:06d}",
+        "invoice_code": invoice_number,
         "customer_id": str(customer["_id"]),
         "customer_name": customer["name"],
         "customer_code": customer["customer_code"],
         "invoice_date": to_utc_day(body.invoice_date),
         "due_date": to_utc_day(body.due_date),
-        "total": body.total,
+        "subtotal": to_num(subtotal),
+        "discount": to_num(discount),
+        "tax": to_num(tax),
+        "total": to_num(total),
         "paid_amount": 0,
-        "status": "unpaid",
+        "outstanding_amount": to_num(total),
+        "status": "draft" if body.save_as == "draft" else "unpaid",
         "created_by": user["username"],
         "created_at": now,
         "updated_at": now,
     }
     if body.notes:
         doc["notes"] = body.notes.strip()
-    result = await db.invoices.insert_one(doc)
-    doc["_id"] = result.inserted_id
+    item_docs = [
+        {
+            "company_id": user["company_id"],
+            "product_code": line["product_code"],
+            "product_name": line["product_name"],
+            "quantity": line["quantity"],
+            "unit": line["unit"],
+            "price": line["price"],
+            "discount": line["discount"],
+            "subtotal": line["subtotal"],
+            "created_at": now,
+            "updated_at": now,
+        }
+        for line in lines
+    ]
+    invoice_id = None
+    if TXN_SUPPORTED:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                res = await db.invoices.insert_one(doc, session=session)
+                invoice_id = res.inserted_id
+                for it in item_docs:
+                    it["invoice_id"] = str(invoice_id)
+                await db.invoice_items.insert_many(item_docs, session=session)
+    else:
+        res = await db.invoices.insert_one(doc)
+        invoice_id = res.inserted_id
+        for it in item_docs:
+            it["invoice_id"] = str(invoice_id)
+        try:
+            await db.invoice_items.insert_many(item_docs)
+        except Exception:
+            await db.invoices.delete_one({"_id": invoice_id, "company_id": user["company_id"]})
+            raise HTTPException(status_code=500, detail="Gagal menyimpan item invoice. Invoice dibatalkan untuk menjaga konsistensi data.")
+    doc["_id"] = invoice_id
     await log_activity(
         user["username"], "invoice_created", request,
-        detail=f"Membuat piutang {doc['invoice_code']} untuk {doc['customer_name']} sebesar Rp {body.total:,.0f}",
+        detail=f"Membuat invoice {invoice_number} untuk {doc['customer_name']} ({'draft' if body.save_as == 'draft' else 'diterbitkan'}) total Rp {doc['total']:,.0f} ({len(item_docs)} item)",
         company_id=user["company_id"], user_id=user["id"],
-        entity_type="invoice", entity_id=str(doc["_id"]),
+        entity_type="invoice", entity_id=str(invoice_id),
         new_data=serialize_invoice(doc),
     )
     return serialize_invoice(doc)
@@ -838,37 +1005,123 @@ async def create_invoice(body: InvoiceCreateRequest, request: Request, user: dic
 @api_router.patch("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, body: InvoiceUpdateRequest, request: Request, user: dict = Depends(require_customer_write)):
     existing = await get_tenant_invoice(invoice_id, user["company_id"])
+    stored = existing.get("status", "unpaid")
+    if stored == "cancelled":
+        raise HTTPException(status_code=400, detail="Invoice yang dibatalkan tidak dapat diubah.")
     paid = existing.get("paid_amount", 0)
+    wants_financial = body.items is not None or body.discount is not None or body.tax is not None
+    if stored == "paid" and (wants_financial or body.invoice_date is not None or body.due_date is not None):
+        raise HTTPException(status_code=400, detail="Invoice lunas hanya dapat diubah catatannya.")
+    if paid > 0 and wants_financial:
+        raise HTTPException(status_code=400, detail="Invoice yang sudah memiliki pembayaran tidak dapat mengubah item, diskon, atau pajak.")
     updates = {}
-    if body.total is not None:
-        if body.total < paid:
-            raise HTTPException(status_code=400, detail=f"Total tidak boleh kurang dari pembayaran yang sudah masuk (Rp {paid:,.0f}).")
-        updates["total"] = body.total
     if body.invoice_date is not None:
         updates["invoice_date"] = to_utc_day(body.invoice_date)
     if body.due_date is not None:
         updates["due_date"] = to_utc_day(body.due_date)
     if body.notes is not None:
         updates["notes"] = body.notes.strip() or None
-    if not updates:
-        return serialize_invoice(existing)
-    new_total = updates.get("total", existing.get("total", 0))
+    new_item_docs = None
+    if wants_financial:
+        if body.items is None:
+            raise HTTPException(status_code=400, detail="Item wajib disertakan saat mengubah perhitungan invoice.")
+        lines, subtotal = compute_items(body.items)
+        discount = dec(body.discount if body.discount is not None else existing.get("discount", 0))
+        tax = dec(body.tax if body.tax is not None else existing.get("tax", 0))
+        if discount > subtotal:
+            raise HTTPException(status_code=400, detail="Diskon invoice melebihi subtotal item.")
+        total = subtotal - discount + tax
+        if total < 0:
+            raise HTTPException(status_code=400, detail="Total invoice tidak boleh negatif.")
+        if total < dec(paid):
+            raise HTTPException(status_code=400, detail=f"Total tidak boleh kurang dari pembayaran yang sudah masuk (Rp {paid:,.0f}).")
+        updates["subtotal"] = to_num(subtotal)
+        updates["discount"] = to_num(discount)
+        updates["tax"] = to_num(tax)
+        updates["total"] = to_num(total)
+        updates["outstanding_amount"] = to_num(total - dec(paid))
+        now_items = datetime.now(timezone.utc)
+        new_item_docs = [
+            {
+                "company_id": user["company_id"],
+                "invoice_id": invoice_id,
+                "product_code": line["product_code"],
+                "product_name": line["product_name"],
+                "quantity": line["quantity"],
+                "unit": line["unit"],
+                "price": line["price"],
+                "discount": line["discount"],
+                "subtotal": line["subtotal"],
+                "created_at": now_items,
+                "updated_at": now_items,
+            }
+            for line in lines
+        ]
     new_inv_date = updates.get("invoice_date", existing.get("invoice_date"))
     new_due = updates.get("due_date", existing.get("due_date"))
     if new_due < new_inv_date:
         raise HTTPException(status_code=400, detail="Tanggal jatuh tempo tidak boleh sebelum tanggal invoice.")
-    updates["status"] = "paid" if paid >= new_total else ("partial" if paid > 0 else "unpaid")
+    if stored == "draft" and body.save_as == "invoice":
+        updates["status"] = "unpaid"
+    elif stored != "draft":
+        new_total = updates.get("total", existing.get("total", 0))
+        updates["status"] = "paid" if paid >= new_total else ("partial" if paid > 0 else "unpaid")
+    if not updates:
+        return serialize_invoice(existing)
     updates["updated_at"] = datetime.now(timezone.utc)
-    old_data = {k: (existing.get(k).isoformat() if isinstance(existing.get(k), datetime) else existing.get(k)) for k in updates if k not in ("updated_at", "status")}
-    await db.invoices.update_one({"_id": existing["_id"], "company_id": user["company_id"]}, {"$set": updates})
+    cid = user["company_id"]
+    old_items = None
+    if new_item_docs is not None:
+        old_items = await db.invoice_items.find({"invoice_id": invoice_id, "company_id": cid}).to_list(500)
+    if TXN_SUPPORTED:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                await db.invoices.update_one({"_id": existing["_id"], "company_id": cid}, {"$set": updates}, session=session)
+                if new_item_docs is not None:
+                    await db.invoice_items.delete_many({"invoice_id": invoice_id, "company_id": cid}, session=session)
+                    await db.invoice_items.insert_many(new_item_docs, session=session)
+    else:
+        await db.invoices.update_one({"_id": existing["_id"], "company_id": cid}, {"$set": updates})
+        if new_item_docs is not None:
+            await db.invoice_items.delete_many({"invoice_id": invoice_id, "company_id": cid})
+            try:
+                await db.invoice_items.insert_many(new_item_docs)
+            except Exception:
+                if old_items:
+                    await db.invoice_items.insert_many(old_items)
+                raise HTTPException(status_code=500, detail="Gagal menyimpan item baru. Perubahan item dibatalkan untuk menjaga konsistensi data.")
     updated = await db.invoices.find_one({"_id": existing["_id"]})
-    new_data = {k: (updated.get(k).isoformat() if isinstance(updated.get(k), datetime) else updated.get(k)) for k in updates if k not in ("updated_at", "status")}
+    old_data = {k: (existing.get(k).isoformat() if isinstance(existing.get(k), datetime) else existing.get(k)) for k in updates if k != "updated_at"}
+    new_data = {k: (updated.get(k).isoformat() if isinstance(updated.get(k), datetime) else updated.get(k)) for k in updates if k != "updated_at"}
     await log_activity(
         user["username"], "invoice_updated", request,
-        detail=f"Memperbarui piutang {existing['invoice_code']}: {list(new_data.keys())}",
-        company_id=user["company_id"], user_id=user["id"],
+        detail=f"Memperbarui invoice {existing['invoice_code']}: {list(new_data.keys())}",
+        company_id=cid, user_id=user["id"],
         entity_type="invoice", entity_id=invoice_id,
         old_data=old_data, new_data=new_data,
+    )
+    return serialize_invoice(updated)
+
+
+@api_router.post("/invoices/{invoice_id}/cancel")
+async def cancel_invoice(invoice_id: str, request: Request, user: dict = Depends(require_invoice_cancel)):
+    existing = await get_tenant_invoice(invoice_id, user["company_id"])
+    stored = existing.get("status", "unpaid")
+    if stored == "cancelled":
+        return serialize_invoice(existing)
+    if existing.get("paid_amount", 0) > 0:
+        raise HTTPException(status_code=400, detail="Invoice yang sudah memiliki pembayaran tidak dapat dibatalkan.")
+    await db.invoices.update_one(
+        {"_id": existing["_id"], "company_id": user["company_id"]},
+        {"$set": {"status": "cancelled", "updated_at": datetime.now(timezone.utc)}},
+    )
+    updated = await db.invoices.find_one({"_id": existing["_id"]})
+    await log_activity(
+        user["username"], "invoice_cancelled", request,
+        detail=f"Membatalkan invoice {existing['invoice_code']} ({existing['customer_name']})",
+        company_id=user["company_id"], user_id=user["id"],
+        entity_type="invoice", entity_id=invoice_id,
+        old_data={"status": stored}, new_data={"status": "cancelled"},
     )
     return serialize_invoice(updated)
 
@@ -876,6 +1129,8 @@ async def update_invoice(invoice_id: str, body: InvoiceUpdateRequest, request: R
 @api_router.post("/invoices/{invoice_id}/payments", status_code=201)
 async def record_payment(invoice_id: str, body: PaymentCreateRequest, request: Request, user: dict = Depends(require_customer_write)):
     invoice = await get_tenant_invoice(invoice_id, user["company_id"])
+    if invoice.get("status") in ("draft", "cancelled"):
+        raise HTTPException(status_code=400, detail="Invoice draft atau dibatalkan tidak dapat menerima pembayaran.")
     paid = invoice.get("paid_amount", 0)
     remaining = invoice.get("total", 0) - paid
     if remaining <= 0:
@@ -903,7 +1158,7 @@ async def record_payment(invoice_id: str, body: PaymentCreateRequest, request: R
     new_status = "paid" if new_paid >= invoice.get("total", 0) else "partial"
     await db.invoices.update_one(
         {"_id": invoice["_id"], "company_id": user["company_id"]},
-        {"$set": {"paid_amount": new_paid, "status": new_status, "updated_at": now}},
+        {"$set": {"paid_amount": new_paid, "outstanding_amount": invoice.get("total", 0) - new_paid, "status": new_status, "updated_at": now}},
     )
     await log_activity(
         user["username"], "payment_recorded", request,
@@ -918,7 +1173,7 @@ async def record_payment(invoice_id: str, body: PaymentCreateRequest, request: R
 
 @api_router.get("/receivables/summary")
 async def receivables_summary(user: dict = Depends(get_current_user)):
-    invoices = await db.invoices.find({"company_id": user["company_id"]}).to_list(50000)
+    invoices = await db.invoices.find({"company_id": user["company_id"], "status": {"$nin": ["draft", "cancelled"]}}).to_list(50000)
     now = datetime.now(timezone.utc)
     buckets = {"current": 0, "d1_30": 0, "d31_60": 0, "d61_90": 0, "over_90": 0}
     bucket_counts = {"current": 0, "d1_30": 0, "d31_60": 0, "d61_90": 0, "over_90": 0}
@@ -1026,6 +1281,28 @@ async def startup():
     await db.invoices.create_index([("company_id", 1), ("due_date", 1)])
     await db.payments.create_index([("company_id", 1), ("invoice_id", 1)])
     await db.payments.create_index([("company_id", 1), ("customer_id", 1)])
+    await db.invoices.create_index([("company_id", 1), ("status", 1)])
+    await db.invoices.create_index([("company_id", 1), ("invoice_date", 1)])
+    await db.invoice_items.create_index("invoice_id")
+    await db.invoice_items.create_index([("company_id", 1), ("invoice_id", 1)])
+
+    global TXN_SUPPORTED
+    try:
+        hello = await client.admin.command("hello")
+        TXN_SUPPORTED = bool(hello.get("setName")) or hello.get("msg") == "isdbgrid"
+    except Exception:
+        TXN_SUPPORTED = False
+    logger.info("MongoDB transaction support: %s", TXN_SUPPORTED)
+
+    await db.invoices.update_many(
+        {"company_id": {"$exists": True}, "subtotal": {"$exists": False}},
+        [{"$set": {
+            "subtotal": "$total",
+            "discount": 0,
+            "tax": 0,
+            "outstanding_amount": {"$subtract": ["$total", {"$ifNull": ["$paid_amount", 0]}]},
+        }}],
+    )
 
     # Tenants (companies)
     company_a = await db.companies.find_one({"code": "DEFAULT"})

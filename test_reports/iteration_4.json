@@ -1,0 +1,26 @@
+{
+  "summary": "Tahap 1C (Invoice + Items) end-to-end tested. Backend: 15/15 pytest passed (test_invoice_items.py) covering: create invoice with items 10x5000+5x15000 = subtotal 125.000, total 125.000, INV-YYYYMM-XXXXXX format (verified INV-202609-XXXXXX), item-level discount, discount>subtotal 400, qty=0 & no-items 422, due<invoice_date 400, draft excluded from receivable=true list and publishable via save_as=invoice, partial-paid invoice locks financial fields but allows notes edit, staff cancel 403 / admin cancel 200, cancelled excluded from receivable list, payment blocked on cancelled 400, viewer create 403, cross-tenant B 404 on GET/cancel, period=month & custom range filters correct, customers picker source returns only active, summary endpoint healthy after draft/cancelled adds. Frontend: /invoice loads via nav-invoice with all 6 filter/search controls, create-invoice-button opens invoice-form-dialog, customer picker returns 4 active customers and selects OK, item editor live-computes item-subtotal-0=Rp 50.000, preview-subtotal & preview-total=Rp 125.000 (matches spec), Simpan creates INV-202609-000012 visible in table with new format, empty-state renders on no-match search, detail dialog shows invoice-detail-code + invoice-detail-items + invoice-detail-summary, cancel dialog contains 'Apakah Anda yakin ingin membatalkan invoice' text and cancelled invoice remains in list under Dibatalkan filter. RBAC UI: viewer sees 0 create/edit/cancel buttons; staff sees create but 0 cancel buttons; ownerb sees only tenant B invoices (API confirms 1 invoice INV-000001 = Rp 9.900.000 overdue). No regressions on Tahap 1A/1B/2 flows.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_invoice_items.py",
+    "/app/test_reports/pytest/invoice_items_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown to 1481 lines; split into routers/ (auth, users, customers, invoices, receivables, security) becomes urgent before Tahap 3 for reviewability & test isolation.",
+    "InvoiceManagePage.jsx (777 lines) contains InvoiceFormDialog, InvoiceDetailDialog, InvoiceRow, and CancelDialog inline. Extract to /components/invoices/ before adding more features.",
+    "compute_invoice_status recomputes on every list read via per-item Python loop and status filter for 'partial'/'unpaid' relies on due_date >= now which duplicates that logic in Mongo query — risk of drift. Consider storing derived status via a scheduled job or a single source of truth helper.",
+    "TXN_SUPPORTED=False on standalone Mongo means POST /api/invoices uses compensating delete on invoice_items failure; edit path re-inserts old items on failure. Best-effort but not atomic — acceptable for MVP.",
+    "Old Tahap-2 invoices (INV-000001..INV-000014) show 'Tidak ada rincian item (invoice lama tanpa item)' in detail — correctly handled with invoice-items-empty testid.",
+    "Test suite for old test_invoices.py posts top-level 'total' field which the new schema no longer supports (requires items[]); those tests will now 422. Recommend deprecating test_invoices.py in favor of test_invoice_items.py, or updating remaining ones."
+  ],
+  "updated_files": ["/app/backend/tests/test_invoice_items.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin/admin123, staff/staff123, viewer/viewer123, ownerb/ownerb123 — all verified working. Login testids: login-username-input, login-password-input, login-submit-button.",
+  "seed_data_creation": "Test run created additional tenant-A invoices via API (INV-202609-XXXXXX series) — draft + published + partial-paid + cancelled samples. UI created INV-202609-000012 for 10x5000+5x15000 (Rp 125.000) and cancelled it via dialog. Data left in place per instruction.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Tahap 1C passes 100% both backend & UI. Tenant A INV-202609 counter is now well past 000012. New-format INV-YYYYMM-XXXXXX coexists with legacy INV-000XXX invoices. Cancel button not shown for staff/viewer as expected. All UI testids in InvoiceManagePage present and stable.",
+  "rca of the issue": "N/A — no defects."
+}

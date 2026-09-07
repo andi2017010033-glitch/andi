@@ -1,13 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
-  Plus, Search, Loader2, AlertCircle, RefreshCw, Eye, Pencil, Receipt,
+  Plus, Search, Loader2, AlertCircle, RefreshCw, Eye, Receipt,
   ChevronLeft, ChevronRight, Banknote, CalendarClock, TrendingUp, Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,124 +47,6 @@ const AGING_LABELS = { current: "Belum Jatuh Tempo", d1_30: "1-30 hari", d31_60:
 function StatusBadge({ status }) {
   const meta = STATUS_META[status] || STATUS_META.unpaid;
   return <span data-testid={`invoice-status-badge-${status}`} className={`inline-block text-xs font-semibold rounded-full px-2.5 py-1 ${meta.cls}`}>{meta.label}</span>;
-}
-
-function InvoiceFormDialog({ open, onOpenChange, initial, onSaved }) {
-  const isEdit = Boolean(initial?.id);
-  const [customers, setCustomers] = useState([]);
-  const [form, setForm] = useState({ customer_id: "", invoice_date: todayStr(), due_date: todayStr(), total: "", notes: "" });
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  useEffect(() => {
-    if (!open) return;
-    setFormError("");
-    setForm(
-      isEdit
-        ? {
-            customer_id: initial.customer_id,
-            invoice_date: initial.invoice_date?.slice(0, 10) || todayStr(),
-            due_date: initial.due_date?.slice(0, 10) || todayStr(),
-            total: String(initial.total),
-            notes: initial.notes || "",
-          }
-        : { customer_id: "", invoice_date: todayStr(), due_date: todayStr(), total: "", notes: "" }
-    );
-    api.get("/customers", { params: { status: "active", limit: 100, sort: "name_asc" } })
-      .then(({ data }) => setCustomers(data.items))
-      .catch(() => setCustomers([]));
-  }, [open, initial, isEdit]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (submitting) return;
-    setFormError("");
-    const total = parseFloat(form.total);
-    if (!isEdit && !form.customer_id) { setFormError("Pelanggan wajib dipilih."); return; }
-    if (!form.invoice_date || !form.due_date) { setFormError("Tanggal invoice dan jatuh tempo wajib diisi."); return; }
-    if (form.due_date < form.invoice_date) { setFormError("Tanggal jatuh tempo tidak boleh sebelum tanggal invoice."); return; }
-    if (isNaN(total) || total <= 0) { setFormError("Nominal harus lebih dari 0."); return; }
-    setSubmitting(true);
-    try {
-      const payload = { invoice_date: form.invoice_date, due_date: form.due_date, total, notes: form.notes.trim() || null };
-      const { data } = isEdit
-        ? await api.patch(`/invoices/${initial.id}`, payload)
-        : await api.post("/invoices", { ...payload, customer_id: form.customer_id });
-      toast.success(isEdit ? `Piutang ${data.invoice_code} diperbarui.` : `Piutang ${data.invoice_code} untuk ${data.customer_name} dibuat.`);
-      onOpenChange(false);
-      onSaved();
-    } catch (err) {
-      setFormError(formatApiErrorDetail(err.response?.data?.detail));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 sm:max-w-lg max-h-[90vh] overflow-y-auto" data-testid="invoice-form-dialog">
-        <DialogHeader>
-          <DialogTitle className="text-slate-900 dark:text-slate-100">{isEdit ? "Edit Piutang" : "Tambah Piutang Baru"}</DialogTitle>
-          <DialogDescription className="text-sm text-slate-500 dark:text-slate-400">
-            {isEdit ? `Kode ${initial.invoice_code} · pelanggan tidak dapat diubah.` : "Kode invoice dibuat otomatis (mis. INV-000001)."}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate className="space-y-4">
-          {formError && (
-            <div data-testid="invoice-form-error" className="flex items-start gap-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-sm text-red-700 dark:text-red-300">
-              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>{formError}</span>
-            </div>
-          )}
-          {isEdit ? (
-            <div className="space-y-1.5">
-              <Label>Pelanggan</Label>
-              <Input value={`${initial.customer_name} (${initial.customer_code})`} disabled className="bg-slate-50 dark:bg-slate-800" data-testid="invoice-customer-readonly" />
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label>Pelanggan <span className="text-red-500">*</span></Label>
-              <Select value={form.customer_id} onValueChange={(v) => setForm({ ...form, customer_id: v })}>
-                <SelectTrigger data-testid="invoice-customer-select" className="bg-white dark:bg-slate-900">
-                  <SelectValue placeholder="Pilih pelanggan aktif..." />
-                </SelectTrigger>
-                <SelectContent className="bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 max-h-64">
-                  {customers.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name} ({c.customer_code})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="inv-date">Tanggal Invoice <span className="text-red-500">*</span></Label>
-              <Input id="inv-date" data-testid="invoice-date-input" type="date" value={form.invoice_date} onChange={(e) => setForm({ ...form, invoice_date: e.target.value })} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="inv-due">Jatuh Tempo <span className="text-red-500">*</span></Label>
-              <Input id="inv-due" data-testid="invoice-due-date-input" type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="inv-total">Nominal (Rp) <span className="text-red-500">*</span></Label>
-            <Input id="inv-total" data-testid="invoice-total-input" type="number" min="1" step="any" value={form.total} onChange={(e) => setForm({ ...form, total: e.target.value })} placeholder="mis. 5000000" className="font-mono" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="inv-notes">Catatan</Label>
-            <Textarea id="inv-notes" data-testid="invoice-notes-input" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} maxLength={1000} rows={2} placeholder="Catatan (opsional)" className="bg-white dark:bg-slate-900" />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="invoice-form-cancel-button">Batal</Button>
-            <Button type="submit" disabled={submitting} data-testid="invoice-form-submit-button" className="bg-emerald-600 hover:bg-emerald-700 text-white hover:text-white">
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : isEdit ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              {submitting ? "Menyimpan..." : "Simpan"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 function PaymentDialog({ invoice, onClose, onSaved }) {
@@ -348,7 +229,6 @@ export default function InvoicesPage() {
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(1);
-  const [formDialog, setFormDialog] = useState({ open: false, initial: null });
   const [paymentTarget, setPaymentTarget] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const debounceRef = useRef(null);
@@ -370,7 +250,7 @@ export default function InvoicesPage() {
     setLoading(true);
     setError("");
     try {
-      const { data: res } = await api.get("/invoices", { params: { search, status, sort, page, limit: 10 } });
+      const { data: res } = await api.get("/invoices", { params: { search, status, sort, page, limit: 10, receivable: true } });
       setData(res);
     } catch (e) {
       setError(formatApiErrorDetail(e.response?.data?.detail));
@@ -392,9 +272,9 @@ export default function InvoicesPage() {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Kelola piutang usaha, pantau jatuh tempo, dan catat pembayaran.</p>
         </div>
         {canWrite && (
-          <Button data-testid="add-invoice-button" onClick={() => setFormDialog({ open: true, initial: null })} className="bg-emerald-600 hover:bg-emerald-700 text-white hover:text-white">
-            <Plus className="h-4 w-4" /> Tambah Piutang
-          </Button>
+          <a href="/invoice" data-testid="goto-invoice-page-button" className="inline-flex items-center gap-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white px-4 h-9 text-sm font-medium transition-colors">
+            <Plus className="h-4 w-4" /> Buat Invoice
+          </a>
         )}
       </motion.div>
 
@@ -504,13 +384,8 @@ export default function InvoicesPage() {
                       <TableCell className="pr-5">
                         <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" size="sm" data-testid={`invoice-detail-${inv.invoice_code}`} onClick={() => setDetailId(inv.id)} className="h-8 w-8 p-0" title="Detail"><Eye className="h-4 w-4" /></Button>
-                          {canWrite && (
-                            <>
-                              {inv.status !== "paid" && (
-                                <Button variant="ghost" size="sm" data-testid={`invoice-pay-${inv.invoice_code}`} onClick={() => setPaymentTarget(inv)} className="h-8 w-8 p-0 text-emerald-600 dark:text-emerald-400" title="Catat Pembayaran"><Banknote className="h-4 w-4" /></Button>
-                              )}
-                              <Button variant="ghost" size="sm" data-testid={`invoice-edit-${inv.invoice_code}`} onClick={() => setFormDialog({ open: true, initial: inv })} className="h-8 w-8 p-0" title="Edit"><Pencil className="h-4 w-4" /></Button>
-                            </>
+                          {canWrite && inv.status !== "paid" && (
+                            <Button variant="ghost" size="sm" data-testid={`invoice-pay-${inv.invoice_code}`} onClick={() => setPaymentTarget(inv)} className="h-8 w-8 p-0 text-emerald-600 dark:text-emerald-400" title="Catat Pembayaran"><Banknote className="h-4 w-4" /></Button>
                           )}
                         </div>
                       </TableCell>
@@ -548,9 +423,6 @@ export default function InvoicesPage() {
                       {canWrite && inv.status !== "paid" && (
                         <Button variant="ghost" size="sm" data-testid={`invoice-pay-m-${inv.invoice_code}`} onClick={() => setPaymentTarget(inv)} className="h-8 w-8 p-0 text-emerald-600"><Banknote className="h-4 w-4" /></Button>
                       )}
-                      {canWrite && (
-                        <Button variant="ghost" size="sm" data-testid={`invoice-edit-m-${inv.invoice_code}`} onClick={() => setFormDialog({ open: true, initial: inv })} className="h-8 w-8 p-0"><Pencil className="h-4 w-4" /></Button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -570,7 +442,6 @@ export default function InvoicesPage() {
         </>
       )}
 
-      <InvoiceFormDialog open={formDialog.open} onOpenChange={(v) => setFormDialog({ open: v, initial: null })} initial={formDialog.initial} onSaved={reloadAll} />
       <PaymentDialog invoice={paymentTarget} onClose={() => setPaymentTarget(null)} onSaved={reloadAll} />
       <InvoiceDetailDialog invoiceId={detailId} onClose={() => setDetailId(null)} />
     </div>
