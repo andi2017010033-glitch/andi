@@ -1,0 +1,92 @@
+{
+  "summary": "Tahap 1A backend + frontend tested. Backend: 11/13 pytest passed. Core auth (login/logout/me/session/refresh), RBAC (admin-only /users and /security), JWT+Bearer, wrong-password Indonesian error, PATCH user role/active, and self-demotion guard all work. Frontend: login page, wrong-password inline error, password toggle, admin login redirect, theme toggle, logout, unauthenticated redirect, /users table load, staff nav hiding, staff redirect from /users, staff admin-only notice on /security all work. Two functional bugs and three missing data-testid elements found.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/users",
+        "issue": "Returns 500 (DuplicateKeyError E11000) when creating any user without email after the first one. The unique+sparse index on `email` does NOT ignore explicit null values in MongoDB — only missing fields. Code always inserts `email: None`, so the 2nd user without an email violates the unique index. Fix: (a) drop `email` from the doc when None, OR (b) recreate index as partial: `create_index('email', unique=True, partialFilterExpression={'email': {'$type': 'string'}})`. Repro: log in as admin, POST /api/users with any {username, name, password} without email → 500. Reproduced from both pytest and UI dialog.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Brute-force lockout is effectively bypassable. Identifier uses `request.client.host` which is the internal Kubernetes ingress/pod IP, not the real client. Because the ingress round-robins between backend pods, the identifier alternates (observed 10.219.7.86 vs 10.219.7.96 for the same client), fragmenting the counter so 5-fail lockout never fires from a single real client. Reproduced: 6 sequential wrong-password attempts against the same fake username from the same client never triggered 429. Fix: honor X-Forwarded-For (leftmost, trusted) or key lockout on username only (with a small per-IP+username hybrid), and/or store attempts atomically with $inc.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "DashboardLayout sidebar",
+        "issue": "Sidebar is rendered and visible, but the required `data-testid=\"dashboard-sidebar\"` is missing on the sidebar element. Spec requires it.",
+        "selector": "[data-testid=\"dashboard-sidebar\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "DashboardLayout topbar / session timer",
+        "issue": "'Sesi 14:54' timer element is visible in the UI but the required `data-testid=\"session-expiry-timer\"` is missing.",
+        "selector": "[data-testid=\"session-expiry-timer\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "DashboardLayout topbar / JWT Aktif badge",
+        "issue": "'JWT Aktif' badge visible but required `data-testid=\"security-status-badge\"` is missing on the badge.",
+        "selector": "[data-testid=\"security-status-badge\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Add User Dialog (UsersPage)",
+        "issue": "Submitting the dialog with no email triggers backend 500 (see backend bug); the UI does not surface any error toast to the user — the dialog just closes/stays and the new user is never added. Needs a try/catch with an inline error message or toast for the create-user request.",
+        "selector": "[data-testid=\"add-user-submit-button\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Add User Dialog",
+        "issue": "Accessibility console warning: `Missing Description or aria-describedby={undefined} for {DialogContent}`. Add a DialogDescription or aria-describedby.",
+        "selector": "role=dialog",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Admin creates staff user via UI",
+        "issue": "POST /api/users returns 500 due to email-null duplicate key; UI silently fails — user is not added to table.",
+        "affected_selectors": ["[data-testid=\"add-user-submit-button\"]", "[data-testid=\"user-management-table\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix POST /api/users 500 by not writing `email: None` (or use partialFilterExpression on the unique email index).",
+    "Fix brute-force lockout: derive client IP from X-Forwarded-For (or key attempts on username only) so the counter isn't fragmented across ingress/pod IPs. Use atomic $inc for the counter.",
+    "Add `data-testid=\"dashboard-sidebar\"` to sidebar container in DashboardLayout.jsx.",
+    "Add `data-testid=\"session-expiry-timer\"` to the session timer element (currently rendering 'Sesi mm:ss').",
+    "Add `data-testid=\"security-status-badge\"` to the 'JWT Aktif' badge.",
+    "Surface API errors from Add-User dialog to the user (toast or inline error) instead of failing silently.",
+    "Add DialogDescription (or aria-describedby) to DialogContent to fix a11y warning."
+  ],
+  "critical_code_review_comments": [
+    "Brute-force identifier trusts `request.client.host` behind a k8s ingress — always resolves to the proxy IP; must use X-Forwarded-For with a trusted-proxy list.",
+    "Login counter race: read-then-write update on login_attempts is not atomic; concurrent failed logins can under-count. Use `$inc` with `$setOnInsert`.",
+    "`db.users` sparse+unique on email doesn't handle explicit null; either drop the field when None or switch to partialFilterExpression.",
+    "`create_user` returns `email` inserted as None even when caller omitted it — inconsistent; strip None before insert.",
+    "`session_info` decodes JWT again without wrapping in try/except; a token race where the cookie expires between get_current_user and this decode would 500 instead of 401.",
+    "server.py is a single ~400 line file. Fine for Tahap 1A but should be split into routers/auth.py, routers/users.py, security.py, db.py before Tahap 2.",
+    "Frontend axios interceptor should refresh on 401 for /auth/me if refresh cookie is present (not verified, code review only)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)"
+  ],
+  "success_rate": {"backend": "85%", "frontend": "78%"},
+  "test_credentials": "admin/admin123, staff/staff123 (from /app/memory/test_credentials.md — verified working)",
+  "seed_data_creation": "Backend test created transient users prefixed 'test_<uuid>'. UI test created 'testerXXXX' but that failed due to the 500 bug so nothing was persisted.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After fixes, re-run `pytest /app/backend/tests/backend_test.py -v` (targeting all 13). For the lockout test to pass with the fix, the identifier must be resilient to the k8s ingress proxying. Also re-run the UI Playwright flow paying attention to the three missing data-testids (dashboard-sidebar, session-expiry-timer, security-status-badge) and to whether the Add-User dialog now succeeds and shows the new user in `user-management-table`.",
+  "rca of the issue": "Bug 1 (500 on create user): MongoDB's `sparse: true` treats a document as 'not indexed' only when the indexed field is absent. When the code inserts `email: None`, the field is present with value null and gets indexed; the second null violates uniqueness. Fix by omitting the key or using `partialFilterExpression: {email: {$type: 'string'}}`. Bug 2 (lockout not triggering): `request.client.host` returns the immediate socket peer, which — behind Kubernetes ingress — is a rotating proxy pod IP (observed 10.219.7.86 and 10.219.7.96 for the same real client), so `identifier = f'{ip}:{username}'` alternates between multiple keys and neither ever reaches MAX_FAILED_ATTEMPTS. Real fix: parse the X-Forwarded-For header (leftmost hop) and use that as the client IP, or key lockout on `username` only for the brute-force counter."
+}

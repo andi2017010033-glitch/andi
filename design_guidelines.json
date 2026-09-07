@@ -1,0 +1,166 @@
+{
+  "project_name": "RekapPiutang (Aplikasi Rekap Piutang Otomatis)",
+  "phase": "Tahap 1A - Project Foundation + Database + Login + Security",
+  "app_type": "dashboard",
+  "language": "id",
+  "design_archetype": "Swiss & Precision Finance Hybrid (Deep Slate Obsidian #0F172A with Emerald Trust #10B981 & Emerald Amber Amber Alerts)",
+  "theme": {
+    "default_mode": "system_with_toggle",
+    "primary_dark_bg": "#0B0F19",
+    "surface_dark": "#111827",
+    "border_dark": "#1F2937",
+    "primary_light_bg": "#F8FAFC",
+    "surface_light": "#FFFFFF",
+    "border_light": "#E2E8F0"
+  },
+  "typography": {
+    "heading_font": "Plus Jakarta Sans, sans-serif",
+    "body_font": "Plus Jakarta Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "font_imports": [
+      "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    ],
+    "hierarchy": {
+      "h1_hero_login": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-tight",
+      "h2_dashboard_title": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100",
+      "h3_section_title": "text-lg sm:text-xl font-semibold tracking-normal text-slate-800 dark:text-slate-200",
+      "body_regular": "text-sm sm:text-base font-normal leading-relaxed text-slate-600 dark:text-slate-300",
+      "label_overline": "text-xs font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400",
+      "financial_num": "font-mono font-medium tracking-tight"
+    }
+  },
+  "colors": {
+    "brand_primary": {
+      "main": "#0F172A",
+      "accent": "#059669",
+      "accent_hover": "#047857",
+      "light_tint": "#ECFDF5",
+      "dark_tint": "#064E3B"
+    },
+    "status_colors": {
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444",
+      "info": "#3B82F6",
+      "security_active": "#10B981",
+      "jwt_valid": "#0EA5E9"
+    },
+    "neutral_shades": {
+      "slate_950": "#020617",
+      "slate_900": "#0F172A",
+      "slate_800": "#1E293B",
+      "slate_700": "#334155",
+      "slate_600": "#475569",
+      "slate_500": "#64748B",
+      "slate_400": "#94A3B8",
+      "slate_300": "#CBD5E1",
+      "slate_200": "#E2E8F0",
+      "slate_100": "#F1F5F9",
+      "slate_50": "#F8FAFC"
+    },
+    "forbidden_colors": [
+      "#7351B7",
+      "#1B93A4"
+    ]
+  },
+  "layout_and_spacing": {
+    "spacing_philosophy": "Generous & Precision-Grid (2x spacing for card paddings and container breathing room)",
+    "container_padding": "p-6 sm:p-8 lg:p-10",
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-12 gap-6 lg:gap-8",
+    "sidebar_width": "w-64 flex-shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl",
+    "topbar_height": "h-16 flex items-center justify-between px-6 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-40"
+  },
+  "key_screens_design": {
+    "login_page": {
+      "style": "Split Screen (Left: High-contrast Dark Luxury Hero Banner with Indotech Financial Abstract Pattern + Security Badge; Right: Clean Auth Form with High Contrast Inputs and Loading Micro-Interactions)",
+      "left_banner": {
+        "title": "Rekap Piutang Otomatis Umkm & Enterprise",
+        "description": "Kelola penagihan, pantau umur piutang, dan percepat arus kas usaha Anda dengan keamanan enkripsi JWT standar perbankan.",
+        "badges": ["JWT Auth Verified", "Role-Based Security", "Audited Activity Log"]
+      },
+      "form_elements": {
+        "username_input": "Shadcn Input customized with leading icon (User), floating focus ring, and data-testid='login-username-input'",
+        "password_input": "Shadcn Input customized with password visibility toggle button and data-testid='login-password-input'",
+        "submit_button": "Pill or crisp rectangular button with emerald glowing hover effect and data-testid='login-submit-button'",
+        "error_alert": "Shadcn Alert with Destructive styling and data-testid='login-error-message'"
+      }
+    },
+    "dashboard_shell": {
+      "sidebar_nav": {
+        "logo_area": "RekapPiutang.id emblem + Badge 'Tahap 1A Foundation'",
+        "nav_items": [
+          {"label": "Ringkasan Utang-Piutang", "icon": "LayoutDashboard", "path": "/dashboard", "status": "Active Shell"},
+          {"label": "Daftar Piutang Pelanggan", "icon": "Receipt", "path": "/piutang", "status": "Modul Tahap 2"},
+          {"label": "Manajemen Pengguna & Peran", "icon": "Users", "path": "/users", "status": "Modul Foundation"},
+          {"label": "Log Keamanan & Sesi", "icon": "ShieldCheck", "path": "/security", "status": "Modul Foundation"},
+          {"label": "Pengaturan Sistem", "icon": "Settings", "path": "/settings", "status": "Modul Foundation"}
+        ],
+        "user_profile_footer": "Active user avatar, name, role badge (Admin / Staff), and explicit Logout button with data-testid='logout-button'"
+      },
+      "header_topbar": {
+        "left": "Breadcrumbs + Active Page Indicator",
+        "right": "JWT Session Timer Countdown Badge + Role Indicator Badge + Dark/Light Mode Switcher + Security Health Check status"
+      },
+      "security_indicator": {
+        "type": "Live Session Security Status Card",
+        "details": "Displays JWT Token Status (Active), Encryption Method (HS256/RS256), Session Expiry Counter, User IP/Device Log, and Security Level indicator."
+      }
+    },
+    "user_role_management": {
+      "style": "Structured Density Financial Table",
+      "features": "Search bar, Role filter dropdown (Admin, Staff, Finance Manager), Add User dialog trigger, Status badge (Aktif / Nonaktif), and Action Menu (Edit Peran, Reset Password, Revoke Session)",
+      "table_attributes": "data-testid='user-management-table'"
+    }
+  },
+  "component_guidelines": {
+    "buttons": "Always define explicit hover:text-white or hover:bg-slate-800. Use data-testid on every interactive button.",
+    "dropdowns_and_popovers": "NEVER use transparent backgrounds. Always apply bg-white dark:bg-slate-900 with border border-slate-200 dark:border-slate-800 shadow-xl.",
+    "toasts": "Use Sonner for toasts (located at src/components/ui/sonner.jsx). Custom toast styles for session warnings and login success.",
+    "cards": "Subtle border, cardless or clean 1px stroke (border-slate-200 dark:border-slate-800), rounded-xl, no muddy gray gradients."
+  },
+  "motion_and_interactions": {
+    "page_transitions": "Framer motion opacity fade and slight y-axis slide (0.2s ease-out)",
+    "micro_interactions": "Active button scale-95 click feel, hover lift on cards (-translate-y-0.5)",
+    "accessibility_motion": "Respect prefers-reduced-motion CSS media queries"
+  },
+  "testing_and_ids": {
+    "rule": "ALL interactive and key informational elements MUST include a data-testid attribute in kebab-case.",
+    "required_test_ids": [
+      "login-username-input",
+      "login-password-input",
+      "login-submit-button",
+      "login-error-message",
+      "dashboard-sidebar",
+      "logout-button",
+      "security-status-badge",
+      "session-expiry-timer",
+      "user-management-table",
+      "user-role-badge",
+      "add-user-button",
+      "theme-toggle-button"
+    ]
+  },
+  "image_urls": {
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1680187288396-ef6dba37f4cd?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "description": "Financial Manager / System Admin Avatar (Indonesian Male Business Professional)",
+        "category": "user_avatar"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1746688833041-4681ba4d5cf4?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "description": "Finance Staff Avatar (Indonesian Female Professional)",
+        "category": "user_avatar"
+      }
+    ],
+    "login_hero_bg": "https://images.unsplash.com/photo-1460925895917-afdab827c52f?crop=entropy&cs=srgb&fm=jpg&q=85"
+  },
+  "instructions_to_main_agent": [
+    "Ensure all components follow React .jsx extension format (not .tsx).",
+    "Do NOT use 'Inter' for headings. Use 'Plus Jakarta Sans' or 'JetBrains Mono' for financial numerals and code.",
+    "Never leave dropdowns or headers with fully transparent backgrounds.",
+    "Keep interface language strictly in Bahasa Indonesia (e.g. 'Masuk', 'Kata Sandi', 'Peran', 'Pengguna', 'Status Sesi', 'Keluar').",
+    "Include JWT auth simulation or real backend integration with token storage in localStorage/cookies, handling 401 unauthenticated redirects.",
+    "Add 'data-testid' to every input, button, table, menu item, and alert card as specified in required_test_ids."
+  ]
+}
