@@ -7,10 +7,14 @@ import { useAuth } from "@/context/AuthContext";
 export default function DashboardPage() {
   const { user } = useAuth();
   const [session, setSession] = useState(null);
+  const [receivables, setReceivables] = useState(null);
 
   useEffect(() => {
     api.get("/auth/session").then(({ data }) => setSession(data)).catch(() => setSession(null));
+    api.get("/receivables/summary").then(({ data }) => setReceivables(data)).catch(() => setReceivables(null));
   }, []);
+
+  const rupiah = (n) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
 
   return (
     <div className="space-y-8" data-testid="dashboard-page">
@@ -19,7 +23,7 @@ export default function DashboardPage() {
           Selamat datang, {user.name}
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Fondasi sistem aktif. Modul rekap piutang akan tersedia pada Tahap 2.
+          Sistem aktif. Pantau piutang, pelanggan, dan keamanan dari sini.
         </p>
       </motion.div>
 
@@ -80,14 +84,18 @@ export default function DashboardPage() {
         >
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">Total Piutang Berjalan</p>
-            <p className="mt-2 text-3xl font-extrabold font-mono tracking-tight text-slate-300 dark:text-slate-600">Rp 0</p>
-            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-              Modul pencatatan &amp; rekap piutang otomatis hadir di Tahap 2.
+            <p className="mt-2 text-3xl font-extrabold font-mono tracking-tight text-slate-900 dark:text-slate-100" data-testid="dashboard-total-piutang">
+              {receivables ? rupiah(receivables.total_outstanding) : "..."}
+            </p>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              {receivables ? (
+                <>Terlambat: <span className="font-semibold text-red-500">{rupiah(receivables.total_overdue)}</span> ({receivables.count_overdue} invoice) · Terbayar: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{rupiah(receivables.total_collected)}</span></>
+              ) : "Memuat ringkasan piutang..."}
             </p>
           </div>
-          <div className="mt-6 flex items-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400">
-            <Receipt className="h-4 w-4" /> Menunggu Modul Tahap 2
-          </div>
+          <a href="/piutang" data-testid="dashboard-goto-piutang" className="mt-6 inline-flex items-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:underline">
+            <Receipt className="h-4 w-4" /> Buka Daftar Piutang
+          </a>
         </motion.div>
       </div>
 

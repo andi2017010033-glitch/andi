@@ -53,8 +53,18 @@
 - Test report: /app/test_reports/iteration_2.json; tests: /app/backend/tests/test_customers.py
 - Sisa issue (non-blocking): regex search belum pakai text index (skala MVP aman); rekomendasi split server.py ke routers sebelum Tahap 2
 
+### Tahap 2 — Modul Piutang/Invoice + Rekap Otomatis + Pembayaran (7 Sep 2026) — SELESAI & TERUJI (backend 100%, frontend 100%, 19/19 pytest)
+- **Entity invoices**: id, company_id, invoice_code (auto INV-XXXXXX per-tenant via counters), customer_id + snapshot customer_name/customer_code, invoice_date, due_date, total, paid_amount, status (unpaid/partial/paid tersimpan; overdue dihitung saat read), notes, timestamps. **Entity payments**: company_id, invoice_id, customer_id, amount, payment_date, method, notes. Index: (company_id+invoice_code) unique, (company_id+customer_id), (company_id+due_date), payments (company_id+invoice_id/customer_id)
+- **API**: GET /api/invoices (search kode/pelanggan, filter status incl. overdue via $expr+due_date, 6 opsi sort, pagination), GET /{id} (+riwayat pembayaran), POST (validasi customer aktif & tenant, due>=invoice_date, total>0), PATCH (total tidak boleh < paid_amount, tanggal konsisten, auto recompute status), POST /{id}/payments (tolak overpayment & sudah lunas → 400, auto transition unpaid→partial→paid), GET /api/receivables/summary (outstanding, overdue+count, collected, aging 5 bucket, top 5 debtors)
+- **Integrasi**: ringkasan transaksi di Detail Pelanggan (Tahap 1B) kini menampilkan angka real; dashboard menampilkan Total Piutang Berjalan live + link ke /piutang
+- **UI /piutang**: kartu ringkasan (Total Piutang, Terlambat, Terbayar), panel aging, tabel desktop + card mobile, dialog tambah/edit (pelanggan readonly saat edit), dialog pembayaran (default = sisa), detail + riwayat pembayaran, search debounce, skeleton/empty/error state
+- **Security**: semua endpoint tenant-scoped (lintas tenant 404), viewer read-only (403 write), audit log invoice_created/invoice_updated/payment_recorded dengan old/new data
+- Seed demo: 4 invoice tenant A (overdue/partial/unpaid/paid + 2 pembayaran) + 1 invoice tenant B
+- Test report: /app/test_reports/iteration_3.json; tests: /app/backend/tests/test_invoices.py
+- Sisa issue (non-blocking): rekomendasi split server.py ke routers & ekstrak dialog InvoicesPage ke components sebelum Tahap 3; status overdue dihitung per-read (aman <1k invoice/tenant)
+
 ## Backlog Prioritas
-- **P0 (Tahap 2)**: CRUD data piutang/invoice pelanggan, rekap otomatis, umur piutang (aging), status lunas/belum
+- **P0 (Tahap 3)**: Laporan/export rekap piutang (Excel/PDF), pengingat jatuh tempo, atau modul berikut sesuai instruksi pengguna
 - **P1**: Pengingat jatuh tempo, export Excel/PDF rekap, dashboard grafik arus kas, filter/pencarian piutang
 - **P2**: Pecah server.py ke routers (auth/users/security/db), forgot/reset password via email, refresh-on-401 axios interceptor, log perangkat/UA lengkap, multi-cabang
 

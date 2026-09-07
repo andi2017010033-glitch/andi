@@ -47,7 +47,7 @@ function SessionTimer() {
 const NAV_ITEMS = [
   { label: "Ringkasan", icon: LayoutDashboard, path: "/dashboard", testId: "nav-dashboard" },
   { label: "Pelanggan", icon: Contact, path: "/pelanggan", testId: "nav-pelanggan" },
-  { label: "Daftar Piutang", icon: Receipt, path: "/piutang", testId: "nav-piutang", disabled: true },
+  { label: "Daftar Piutang", icon: Receipt, path: "/piutang", testId: "nav-piutang" },
   { label: "Pengguna & Peran", icon: Users, path: "/users", testId: "nav-users", adminOnly: true },
   { label: "Keamanan & Sesi", icon: ShieldCheck, path: "/security", testId: "nav-security" },
   { label: "Pengaturan", icon: Settings, path: "/settings", testId: "nav-settings" },
@@ -56,6 +56,7 @@ const NAV_ITEMS = [
 const PAGE_TITLES = {
   "/dashboard": "Ringkasan",
   "/pelanggan": "Pelanggan",
+  "/piutang": "Daftar Piutang",
   "/users": "Pengguna & Peran",
   "/security": "Keamanan & Sesi",
   "/settings": "Pengaturan",

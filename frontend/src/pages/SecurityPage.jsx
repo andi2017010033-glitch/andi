@@ -16,6 +16,9 @@ const ACTION_META = {
   customer_created: { label: "Pelanggan Dibuat", icon: UserPlus, cls: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50" },
   customer_updated: { label: "Pelanggan Diperbarui", icon: UserCog, cls: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50" },
   customer_deactivated: { label: "Pelanggan Dinonaktifkan", icon: AlertTriangle, cls: "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/50" },
+  invoice_created: { label: "Piutang Dibuat", icon: UserPlus, cls: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50" },
+  invoice_updated: { label: "Piutang Diperbarui", icon: UserCog, cls: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50" },
+  payment_recorded: { label: "Pembayaran Dicatat", icon: ShieldCheck, cls: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50" },
 };
 
 export default function SecurityPage() {
