@@ -37,6 +37,11 @@
 - Bug teruji & diperbaiki: duplicate-key email null (partial index), lockout terfragmentasi IP ingress, a11y DialogDescription
 - Test report: /app/test_reports/iteration_1.json; backend tests: /app/backend/tests/backend_test.py
 
+### Menu Buat Akun / Pendaftaran Mandiri (7 Sep 2026) — SELESAI & TERUJI
+- Endpoint `POST /api/auth/register`: username unik (409 jika duplikat), email opsional unik, peran otomatis **staff**, auto-login (JWT + cookie), tercatat di audit log (`user_registered`)
+- Halaman `/register` (link "Buat akun" dari halaman login): nama, username, email opsional, kata sandi + konfirmasi, toggle visibilitas, error inline; sukses → redirect dashboard
+- Terverifikasi via curl (register 201, duplikat 409, login akun baru 200) dan Playwright (flow UI lengkap, badge STAFF muncul)
+
 ## Backlog Prioritas
 - **P0 (Tahap 2)**: CRUD data piutang pelanggan, rekap otomatis, umur piutang (aging), status lunas/belum
 - **P1**: Pengingat jatuh tempo, export Excel/PDF rekap, dashboard grafik arus kas, filter/pencarian piutang

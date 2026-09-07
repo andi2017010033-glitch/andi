@@ -137,6 +137,13 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=40)
+    name: str = Field(min_length=1, max_length=80)
+    email: Optional[str] = None
+    password: str = Field(min_length=6)
+
+
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=40)
     name: str = Field(min_length=1, max_length=80)
@@ -153,6 +160,43 @@ class UserUpdateRequest(BaseModel):
 
 
 # ---------- Auth endpoints ----------
+
+@api_router.post("/auth/register", status_code=201)
+async def register(body: RegisterRequest, request: Request, response: Response):
+    username = body.username.strip().lower()
+    if await db.users.find_one({"username": username}):
+        raise HTTPException(status_code=409, detail="Username sudah digunakan.")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "username": username,
+        "name": body.name.strip(),
+        "password_hash": hash_password(body.password),
+        "role": "staff",
+        "is_active": True,
+        "created_at": now,
+        "created_by": "self-register",
+        "last_login_at": now,
+    }
+    if body.email:
+        email = body.email.strip().lower()
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=409, detail="Email sudah digunakan.")
+        doc["email"] = email
+    result = await db.users.insert_one(doc)
+    doc["_id"] = result.inserted_id
+
+    access_token = create_access_token(str(doc["_id"]), username, "staff")
+    refresh_token = create_refresh_token(str(doc["_id"]))
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="none", max_age=ACCESS_TOKEN_TTL_MINUTES * 60, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=True, samesite="none", max_age=REFRESH_TOKEN_TTL_DAYS * 86400, path="/")
+    await log_activity(username, "user_registered", request, "Pendaftaran mandiri (peran staff)")
+    return {
+        "user": serialize_user(doc),
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_TTL_MINUTES * 60,
+    }
+
 
 @api_router.post("/auth/login")
 async def login(body: LoginRequest, request: Request, response: Response):

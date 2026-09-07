@@ -149,6 +149,13 @@ export default function LoginPage() {
             </Button>
           </form>
 
+          <p className="mt-6 text-sm text-slate-500 dark:text-slate-400 text-center">
+            Belum punya akun?{" "}
+            <a href="/register" data-testid="goto-register-link" className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline">
+              Buat akun
+            </a>
+          </p>
+
           <div className="mt-8 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 px-4 py-3 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
             Sesi dilindungi token JWT berumur 15 menit dengan pembaruan otomatis. Percobaan masuk gagal berulang akan mengunci akses sementara.
           </div>
